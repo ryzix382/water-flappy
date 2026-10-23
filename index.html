@@ -1,0 +1,563 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Water Flappy</title>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #072d4a;
+      font-family: Arial, Helvetica, sans-serif;
+    }
+
+    body {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    canvas {
+      display: block;
+      width: min(100vw, 1000px);
+      height: auto;
+      max-height: 100vh;
+      aspect-ratio: 1000 / 650;
+      background: #0f78a8;
+      box-shadow: 0 0 30px rgba(0,0,0,0.35);
+    }
+  </style>
+</head>
+<body>
+<canvas id="game" width="1000" height="650"></canvas>
+
+<script>
+(() => {
+  const canvas = document.getElementById("game");
+  const ctx = canvas.getContext("2d");
+
+  const WIDTH = canvas.width;
+  const HEIGHT = canvas.height;
+
+  const STATE_START = "start";
+  const STATE_PLAYING = "playing";
+  const STATE_GAME_OVER = "game_over";
+
+  let gameState = STATE_START;
+
+  let fishX = 180;
+  let fishStartY = HEIGHT / 2 - 20;
+  let fishY = fishStartY;
+
+  const fishW = 60;
+  const fishH = 38;
+
+  let velocity = 0;
+  const gravity = 0.38;
+  const swimPower = -7.5;
+
+  let obstacles = [];
+  const obstacleWidth = 125;
+  const gapSize = 220;
+  const obstacleSpeed = 4;
+
+  let spawnTimer = 0;
+  const spawnDelay = 120;
+
+  let score = 0;
+  let frameCount = 0;
+
+  const bubbles = Array.from({ length: 35 }, () => ({
+    x: Math.random() * WIDTH,
+    y: Math.random() * HEIGHT,
+    size: 3 + Math.random() * 6,
+    speed: 0.5 + Math.random() * 1.3
+  }));
+
+  function rand(min, max) {
+    return Math.random() * (max - min) + min;
+  }
+
+  function randInt(min, max) {
+    return Math.floor(rand(min, max + 1));
+  }
+
+  function chooseVineCount() {
+    const r = Math.random();
+    if (r < 0.45) return 1;
+    if (r < 0.80) return 2;
+    return 3;
+  }
+
+  function startGame() {
+    gameState = STATE_PLAYING;
+    fishY = fishStartY;
+    velocity = 0;
+    obstacles = [];
+    score = 0;
+    spawnTimer = -55;
+  }
+
+  function resetToStart() {
+    gameState = STATE_START;
+    fishY = fishStartY;
+    velocity = 0;
+    obstacles = [];
+    score = 0;
+    spawnTimer = 0;
+  }
+
+  function createObstacle() {
+    const gapY = randInt(185, HEIGHT - 185);
+
+    obstacles.push({
+      x: WIDTH + 50,
+      gapY,
+      passed: false,
+      topVines: chooseVineCount(),
+      bottomVines: chooseVineCount(),
+      topSeed: Math.random() * 1000,
+      bottomSeed: Math.random() * 1000
+    });
+  }
+
+  function drawBackground() {
+    const grad = ctx.createLinearGradient(0, 0, 0, HEIGHT);
+    grad.addColorStop(0, "rgb(20,145,210)");
+    grad.addColorStop(1, "rgb(5,60,120)");
+
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, WIDTH, HEIGHT);
+  }
+
+  function updateBubbles() {
+    for (const b of bubbles) {
+      b.y -= b.speed;
+
+      if (b.y < -20) {
+        b.y = HEIGHT + 20;
+        b.x = Math.random() * WIDTH;
+      }
+    }
+  }
+
+  function drawBubbles() {
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = "rgb(180,225,255)";
+
+    for (const b of bubbles) {
+      ctx.beginPath();
+      ctx.arc(b.x, b.y, b.size, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+  }
+
+  function drawSand() {
+    ctx.fillStyle = "rgb(215,190,120)";
+    ctx.fillRect(0, HEIGHT - 35, WIDTH, 35);
+
+    ctx.fillStyle = "rgb(230,205,140)";
+    for (let x = 15; x < WIDTH; x += 35) {
+      ctx.beginPath();
+      ctx.arc(x, HEIGHT - 23, 3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  function drawFish(x, y) {
+    const centerY = y + fishH / 2;
+
+    ctx.fillStyle = "rgb(255,120,20)";
+    ctx.beginPath();
+    ctx.moveTo(x, centerY);
+    ctx.lineTo(x - 25, y);
+    ctx.lineTo(x - 25, y + fishH);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.fillStyle = "rgb(255,170,40)";
+    ctx.beginPath();
+    ctx.ellipse(
+      x + fishW / 2,
+      y + fishH / 2,
+      fishW / 2,
+      fishH / 2,
+      0,
+      0,
+      Math.PI * 2
+    );
+    ctx.fill();
+
+    ctx.fillStyle = "rgb(255,120,20)";
+    ctx.beginPath();
+    ctx.moveTo(x + fishW / 2, centerY);
+    ctx.lineTo(x + fishW / 2 - 15, centerY + 28);
+    ctx.lineTo(x + fishW / 2 + 10, centerY + 10);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.fillStyle = "#fff";
+    ctx.beginPath();
+    ctx.arc(x + 45, y + 12, 7, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = "#111";
+    ctx.beginPath();
+    ctx.arc(x + 47, y + 12, 3, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  function drawLeaf(cx, cy, size, direction) {
+    ctx.fillStyle = "rgb(60,190,120)";
+    ctx.beginPath();
+
+    if (direction < 0) {
+      ctx.moveTo(cx, cy);
+      ctx.lineTo(cx - size, cy - size / 2);
+      ctx.lineTo(cx - size * 1.4, cy);
+      ctx.lineTo(cx - size, cy + size / 2);
+    } else {
+      ctx.moveTo(cx, cy);
+      ctx.lineTo(cx + size, cy - size / 2);
+      ctx.lineTo(cx + size * 1.4, cy);
+      ctx.lineTo(cx + size, cy + size / 2);
+    }
+
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  function pseudo(seed) {
+    const x = Math.sin(seed * 12.9898) * 43758.5453;
+    return x - Math.floor(x);
+  }
+
+  function drawSingleVine(baseX, y, height, growFromTop, seed, swayOffset) {
+    if (height <= 5) return;
+
+    const segments = Math.max(8, Math.floor(height / 15));
+    const points = [];
+
+    for (let i = 0; i <= segments; i++) {
+      const t = i / segments;
+
+      const py = growFromTop
+        ? y + t * height
+        : y + height - t * height;
+
+      let sway =
+        Math.sin(frameCount * 0.055 + t * 6 + swayOffset) * 11;
+
+      sway +=
+        Math.sin(frameCount * 0.035 + t * 10 + swayOffset * 0.7) * 5;
+
+      points.push({
+        x: baseX + sway,
+        y: py
+      });
+    }
+
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+
+    ctx.strokeStyle = "rgb(15,105,65)";
+    ctx.lineWidth = 13;
+    ctx.beginPath();
+    ctx.moveTo(points[0].x, points[0].y);
+
+    for (let i = 1; i < points.length; i++) {
+      ctx.lineTo(points[i].x, points[i].y);
+    }
+    ctx.stroke();
+
+    ctx.strokeStyle = "rgb(30,145,85)";
+    ctx.lineWidth = 7;
+    ctx.beginPath();
+    ctx.moveTo(points[0].x, points[0].y);
+
+    for (let i = 1; i < points.length; i++) {
+      ctx.lineTo(points[i].x, points[i].y);
+    }
+    ctx.stroke();
+
+    const leafStep = Math.max(3, Math.floor(segments / 5));
+
+    for (let i = 2; i < segments - 1; i += leafStep) {
+      const p = points[i];
+      const v = pseudo(seed + i * 5.123);
+      const direction = v < 0.5 ? -1 : 1;
+      const leafSize = 11 + pseudo(seed + i * 7.77) * 5;
+
+      drawLeaf(p.x, p.y, leafSize, direction);
+    }
+
+    const tip = points[points.length - 1];
+    ctx.fillStyle = "rgb(60,190,120)";
+    ctx.beginPath();
+    ctx.arc(tip.x, tip.y, 7, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  function drawVineGroup(x, y, width, height, growFromTop, count, seed) {
+    if (height <= 0) return;
+
+    let offsets;
+
+    if (count === 1) {
+      offsets = [0.5];
+    } else if (count === 2) {
+      offsets = [0.32, 0.68];
+    } else {
+      offsets = [0.22, 0.5, 0.78];
+    }
+
+    offsets.forEach((position, index) => {
+      const baseX = x + width * position;
+
+      const lengthFactor =
+        0.88 + pseudo(seed + index * 101.7) * 0.12;
+
+      const vineHeight = height * lengthFactor;
+
+      const vineY = growFromTop
+        ? y
+        : y + height - vineHeight;
+
+      drawSingleVine(
+        baseX,
+        vineY,
+        vineHeight,
+        growFromTop,
+        seed + index * 1000,
+        seed * 0.01 + index * 1.7
+      );
+    });
+  }
+
+  function drawObstacles() {
+    for (const obstacle of obstacles) {
+      const x = obstacle.x;
+      const gapY = obstacle.gapY;
+
+      const topHeight = gapY - gapSize / 2;
+      const bottomY = gapY + gapSize / 2;
+      const bottomHeight = HEIGHT - 35 - bottomY;
+
+      drawVineGroup(
+        x,
+        0,
+        obstacleWidth,
+        topHeight,
+        true,
+        obstacle.topVines,
+        obstacle.topSeed
+      );
+
+      drawVineGroup(
+        x,
+        bottomY,
+        obstacleWidth,
+        bottomHeight,
+        false,
+        obstacle.bottomVines,
+        obstacle.bottomSeed
+      );
+    }
+  }
+
+  function checkCollision() {
+    const fish = {
+      x: fishX + 7,
+      y: fishY + 5,
+      w: fishW - 12,
+      h: fishH - 10
+    };
+
+    if (fishY < 0) return true;
+    if (fishY + fishH > HEIGHT - 35) return true;
+
+    for (const obstacle of obstacles) {
+      const x = obstacle.x;
+      const gapY = obstacle.gapY;
+
+      const topHeight = gapY - gapSize / 2;
+      const bottomY = gapY + gapSize / 2;
+
+      const collisionWidth = obstacleWidth - 32;
+
+      const top = {
+        x: x + 16,
+        y: 0,
+        w: collisionWidth,
+        h: topHeight
+      };
+
+      const bottom = {
+        x: x + 16,
+        y: bottomY,
+        w: collisionWidth,
+        h: HEIGHT - bottomY
+      };
+
+      if (
+        fish.x < top.x + top.w &&
+        fish.x + fish.w > top.x &&
+        fish.y < top.y + top.h &&
+        fish.y + fish.h > top.y
+      ) return true;
+
+      if (
+        fish.x < bottom.x + bottom.w &&
+        fish.x + fish.w > bottom.x &&
+        fish.y < bottom.y + bottom.h &&
+        fish.y + fish.h > bottom.y
+      ) return true;
+    }
+
+    return false;
+  }
+
+  function centeredText(text, font, y, color = "#fff") {
+    ctx.fillStyle = color;
+    ctx.font = font;
+    ctx.textAlign = "center";
+    ctx.fillText(text, WIDTH / 2, y);
+  }
+
+  function drawStartScreen() {
+    const bob = Math.sin(frameCount * 0.05) * 7;
+    drawFish(fishX, fishStartY + bob);
+
+    ctx.fillStyle = "rgba(0,20,45,0.40)";
+    ctx.fillRect(0, 0, WIDTH, HEIGHT);
+
+    centeredText("WATER FLAPPY", "bold 64px Arial", 155);
+    centeredText("Schwimme durch die Wasserranken!", "bold 30px Arial", 240);
+
+    centeredText("SPACE = nach oben schwimmen", "23px Arial", 310);
+    centeredText("Weiche den Wasserranken oben und unten aus.", "23px Arial", 350);
+    centeredText("Für jedes Hindernis bekommst du 1 Punkt.", "23px Arial", 390);
+
+    ctx.strokeStyle = "#fff";
+    ctx.lineWidth = 2;
+    ctx.strokeRect(WIDTH / 2 - 175, 435, 350, 64);
+
+    centeredText("SPACE ZUM STARTEN", "bold 28px Arial", 478);
+  }
+
+  function drawGameOver() {
+    ctx.fillStyle = "rgba(0,0,0,0.55)";
+    ctx.fillRect(0, 0, WIDTH, HEIGHT);
+
+    centeredText("GAME OVER", "bold 64px Arial", HEIGHT / 2 - 45);
+    centeredText(`Score: ${score}`, "bold 36px Arial", HEIGHT / 2 + 35);
+    centeredText("R = zurück zum Startbildschirm", "23px Arial", HEIGHT / 2 + 95);
+  }
+
+  function update() {
+    frameCount++;
+
+    if (gameState === STATE_PLAYING) {
+      velocity += gravity;
+      fishY += velocity;
+
+      spawnTimer++;
+
+      if (spawnTimer >= spawnDelay) {
+        createObstacle();
+        spawnTimer = 0;
+      }
+
+      for (const obstacle of obstacles) {
+        obstacle.x -= obstacleSpeed;
+
+        if (
+          obstacle.x + obstacleWidth < fishX &&
+          !obstacle.passed
+        ) {
+          obstacle.passed = true;
+          score++;
+        }
+      }
+
+      obstacles = obstacles.filter(
+        o => o.x > -obstacleWidth
+      );
+
+      if (checkCollision()) {
+        gameState = STATE_GAME_OVER;
+      }
+    }
+
+    updateBubbles();
+  }
+
+  function draw() {
+    drawBackground();
+    drawBubbles();
+    drawSand();
+
+    if (gameState !== STATE_START) {
+      drawObstacles();
+    }
+
+    if (gameState === STATE_START) {
+      drawStartScreen();
+    } else {
+      drawFish(fishX, fishY);
+
+      centeredText(
+        `Score: ${score}`,
+        "bold 36px Arial",
+        55
+      );
+    }
+
+    if (gameState === STATE_GAME_OVER) {
+      drawGameOver();
+    }
+  }
+
+  function loop() {
+    update();
+    draw();
+    requestAnimationFrame(loop);
+  }
+
+  function flapOrStart() {
+    if (gameState === STATE_START) {
+      startGame();
+    } else if (gameState === STATE_PLAYING) {
+      velocity = swimPower;
+    }
+  }
+
+  document.addEventListener("keydown", e => {
+    if (e.code === "Space") {
+      e.preventDefault();
+      flapOrStart();
+    }
+
+    if (e.code === "KeyR" && gameState === STATE_GAME_OVER) {
+      resetToStart();
+    }
+  });
+
+  canvas.addEventListener("pointerdown", () => {
+    if (gameState === STATE_GAME_OVER) {
+      resetToStart();
+      return;
+    }
+
+    flapOrStart();
+  });
+
+  loop();
+})();
+</script>
+</body>
+</html>
